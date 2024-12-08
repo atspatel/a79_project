@@ -178,7 +178,7 @@ Modify the presentation configuration.
 }
 ```
 
-**Note:** Updating `num_slides` (optional) will change the status to `pending` and trigger a re-run of the content generation step.
+**Note:** Updating `num_slides`, `topic`, `description`, will change the status to `pending` and trigger a re-run of the content generation step. This allows partial updation.
 
 **Yet to implement:** The ability to modify the number of slides dynamically will trigger an update to the presentation content, but it's not currently functional.
 

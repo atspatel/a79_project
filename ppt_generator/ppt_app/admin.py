@@ -9,7 +9,6 @@ class PresentationAdmin(BaseJsonAdmin):
         "id",
         "user",
         "topic",
-        "description",
         "num_slides",
         "status",
         "create_time",

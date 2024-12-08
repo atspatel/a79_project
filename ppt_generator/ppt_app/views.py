@@ -58,37 +58,40 @@ def generate_pptx_from_openai(topic, description, num_slides=4):
         return "Error generating PowerPoint content."
 
 
-def process_ppt_obj(ppt_obj):
-    ppt_obj.status = "in_progress"
-    ppt_obj.save()
+def process_presentation_obj(presentation_obj):
+    if presentation_obj.status in ['in_progress', 'completed']:
+        return False
+    
+    presentation_obj.status = "in_progress"
+    presentation_obj.save()
     try:
-        topic = ppt_obj.topic
-        description = ppt_obj.description
-        num_slides = ppt_obj.num_slides
+        topic = presentation_obj.topic
+        description = presentation_obj.description
+        num_slides = presentation_obj.num_slides
 
         slides = generate_pptx_from_openai(topic, description, num_slides)
 
-        PresentationSlide.objects.filter(presentation=ppt_obj).delete()
+        PresentationSlide.objects.filter(presentation=presentation_obj).delete()
 
         for i, slide in enumerate(slides):
             slide_obj = PresentationSlide.objects.create(
-                presentation=ppt_obj,
+                presentation=presentation_obj,
                 layout_id=slide.get("layout_id"),
                 layout_name=slide.get("layout_name"),
                 content=slide.get("content"),
                 index=i,
             )
             logging.info(
-                f"slide content saved to db, presentatin_id: {ppt_obj.id}, index:{i}"
+                f"slide content saved to db, presentatin_id: {presentation_obj.id}, index:{i}"
             )
-        ppt_obj.status = "completed"
-        ppt_obj.save()
+        presentation_obj.status = "completed"
+        presentation_obj.save()
         return True
     except Exception as e:
         # Log the exception and update the status to 'failed'
-        logging.error(f"Error processing PPT for presentation_id: {ppt_obj.id}, Error: {e}")
-        ppt_obj.status = "failed"
-        ppt_obj.save()
+        logging.error(f"Error processing PPT for presentation_id: {presentation_obj.id}, Error: {e}")
+        presentation_obj.status = "failed"
+        presentation_obj.save()
         return False
 
 
@@ -124,11 +127,11 @@ class PresentationView(APIView):
         )
 
         if serializer.is_valid():
-            ppt_obj = serializer.save()
+            presentation = serializer.save()
             return PPTCreateResponseThen(
                     serializer.data,
-                    process_ppt_obj,
-                    ppt_obj
+                    process_presentation_obj,
+                    presentation
                 )
 
         return Response(serializer.errors, 400)
@@ -145,12 +148,42 @@ class PresentationView(APIView):
         except Presentation.DoesNotExist:
             return Response({"detail": "Not found."}, 404)
 
+        # Only allow 'topic', 'description', 'num_slides', and 'theme' fields to be updated
+        valid_fields = ['topic', 'description', 'num_slides', 'theme']
+        filtered_data = {key: value for key, value in request.data.items() if key in valid_fields}
+
+        # If no valid fields are provided, return a bad request response
+        if not filtered_data:
+            return Response(
+                {"detail": "Only 'topic', 'description', 'num_slides', and 'theme' fields can be updated."}, 400
+            )
+
+        # Check if 'topic', 'description', or 'num_slides' are being updated
+        update_content = False
+        if 'topic' in filtered_data and presentation.topic != filtered_data['topic']:
+            update_content = True
+        if 'description' in filtered_data and presentation.description != filtered_data['description']:
+            update_content = True
+        if 'num_slides' in filtered_data:
+            current_num_slides = presentation.num_slides
+            new_num_slides = filtered_data['num_slides']
+            if current_num_slides != new_num_slides:
+                update_content = True    
+
         # Update the fields
         serializer = PresentationSerializer(
-            presentation, data=request.data, partial=True
+            presentation, data=filtered_data, partial=True
         )  # Allow partial updates
         if serializer.is_valid():
             presentation = serializer.save()
+            if update_content:
+                presentation.status = 'pending'
+                presentation.save()
+                return PPTCreateResponseThen(
+                    serializer.data,
+                    process_presentation_obj,
+                    presentation
+                )
             return Response(PresentationSerializer(presentation).data, 200)
         return Response(serializer.errors, 400)
 
