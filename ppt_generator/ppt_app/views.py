@@ -21,7 +21,7 @@ from .presentation_context import presentation_tools, presentation_context
 
 logging.getLogger().setLevel("INFO")
 
-
+   
 def post_process_slides(slides):
     for slide in slides:
         for placeholder in slide["content"]:
@@ -61,31 +61,47 @@ def generate_pptx_from_openai(topic, description, num_slides=4):
 def process_ppt_obj(ppt_obj):
     ppt_obj.status = "in_progress"
     ppt_obj.save()
+    try:
+        topic = ppt_obj.topic
+        description = ppt_obj.description
+        num_slides = ppt_obj.num_slides
 
-    topic = ppt_obj.topic
-    description = ppt_obj.description
-    num_slides = ppt_obj.num_slides
+        slides = generate_pptx_from_openai(topic, description, num_slides)
 
-    slides = generate_pptx_from_openai(topic, description, num_slides)
+        PresentationSlide.objects.filter(presentation=ppt_obj).delete()
 
-    PresentationSlide.objects.filter(presentation=ppt_obj).delete()
+        for i, slide in enumerate(slides):
+            slide_obj = PresentationSlide.objects.create(
+                presentation=ppt_obj,
+                layout_id=slide.get("layout_id"),
+                layout_name=slide.get("layout_name"),
+                content=slide.get("content"),
+                index=i,
+            )
+            logging.info(
+                f"slide content saved to db, presentatin_id: {ppt_obj.id}, index:{i}"
+            )
+        ppt_obj.status = "completed"
+        ppt_obj.save()
+        return True
+    except Exception as e:
+        # Log the exception and update the status to 'failed'
+        logging.error(f"Error processing PPT for presentation_id: {ppt_obj.id}, Error: {e}")
+        ppt_obj.status = "failed"
+        ppt_obj.save()
+        return False
 
-    for i, slide in enumerate(slides):
-        slide_obj = PresentationSlide.objects.create(
-            presentation=ppt_obj,
-            layout_id=slide.get("layout_id"),
-            layout_name=slide.get("layout_name"),
-            content=slide.get("content"),
-            index=i,
-        )
-        logging.info(
-            f"slide content saved to db, presentatin_id: {ppt_obj.id}, index:{i}"
-        )
-    ppt_obj.status = "completed"
-    ppt_obj.save()
-    return True
 
+class PPTCreateResponseThen(Response):
+    def __init__(self, data, then_callback, obj, **kwargs):
+        super().__init__(data, **kwargs)
+        self.obj = obj
+        self.then_callback = then_callback
 
+    def close(self):
+        super().close()
+        self.then_callback(self.obj)
+        
 class PresentationView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -96,9 +112,10 @@ class PresentationView(APIView):
             except Presentation.DoesNotExist:
                 return Response({"detail": "Not found."}, 404)
             return Response(PresentationSerializer(presentation).data, 200)
-        return Response(
-            {"detail": "Bad request. Presentation ID is required for GET."}, 400
-        )
+        
+        presentations = Presentation.objects.filter(user=request.user).order_by('-create_time')
+        serializer = PresentationSerializer(presentations, many=True)
+        return Response(serializer.data, 200)
 
     def post(self, request):
         # Ensure the request context is passed to the serializer
@@ -108,8 +125,11 @@ class PresentationView(APIView):
 
         if serializer.is_valid():
             ppt_obj = serializer.save()
-            process_ppt_obj(ppt_obj)
-            return Response(serializer.data, 201)
+            return PPTCreateResponseThen(
+                    serializer.data,
+                    process_ppt_obj,
+                    ppt_obj
+                )
 
         return Response(serializer.errors, 400)
 
@@ -141,6 +161,8 @@ class PresentationDownloadView(APIView):
     def get(self, request, id):
         try:
             presentation = Presentation.objects.get(id=id, user=request.user)
+            if presentation.status != "completed":
+                return Response({"detail": "Presentation status is not completed"}, 404)
             slides = PresentationSlide.objects.filter(
                 presentation=presentation
             ).order_by("index")

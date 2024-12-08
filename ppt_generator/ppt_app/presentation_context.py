@@ -77,7 +77,12 @@ presentation_context = """
     - **slides (array):** An array of slides, where each slide contains:
       - **layout_id (int):** The ID of the slide layout (between 0 and 10).
       - **layout_name (str):** The name of the slide layout.
-      - **content (array):** An array of strings or prompts representing the content for each slide.
+      - **content (array):** An array of objects representing the placeholders and their values for each slide. Each object in the array has:
+        - **name (str):** The name of the placeholder (e.g., "Title 1", "Content Placeholder 2").
+        - **value (str | list):** The value to replace the placeholder:
+          - For text placeholders (__placeholder__str), the value should be a string.
+          - For list placeholders (__placeholder__list), the value should be a list of strings.
+          - For image prompts (__placeholder__prompt), the value should be a descriptive string suitable for image search APIs.
   """
 presentation_tools = [
     {
